@@ -1,0 +1,9 @@
+{
+  "board_size": 9,
+  "action_size": 81,
+  "channels": 64,
+  "num_layers": 3,
+  "hidden_size": 128,
+  "training_step": 1000,
+  "test_accuracy": 0.85
+}

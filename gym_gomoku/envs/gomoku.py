@@ -9,13 +9,6 @@ import six
 
 from gym_gomoku.envs.util import gomoku_util
 from gym_gomoku.envs.util import make_random_policy
-from gym_gomoku.envs.util import make_beginner_policy
-from gym_gomoku.envs.util import make_medium_policy
-from gym_gomoku.envs.util import make_expert_policy
-
-# Rules from Wikipedia: Gomoku is an abstract strategy board game, Gobang or Five in a Row, it is traditionally played with Go pieces (black and white stones) on a go board with 19x19 or (15x15) 
-# The winner is the first player to get an unbroken row of five stones horizontally, vertically, or diagonally. (so-calle five-in-a row)
-# Black plays first if white did not win in the previous game, and players alternate in placing a stone of their color on an empty intersection.
 
 class GomokuState(object):
     '''
@@ -49,7 +42,7 @@ class GomokuState(object):
 # sample() method will only sample from valid spaces
 class DiscreteWrapper(spaces.Discrete):
     def __init__(self, n):
-        self.n = n
+        super().__init__(n)  # Properly initialize parent class
         self.valid_spaces = list(range(n))
     
     def sample(self):
@@ -59,7 +52,11 @@ class DiscreteWrapper(spaces.Discrete):
             print ("Space is empty")
             return None
         np_random, _ = seeding.np_random()
-        randint = np_random.randint(len(self.valid_spaces))
+        # Use integers() for newer NumPy, fallback to randint() for older versions
+        if hasattr(np_random, 'integers'):
+            randint = np_random.integers(len(self.valid_spaces))
+        else:
+            randint = np_random.randint(len(self.valid_spaces))
         return self.valid_spaces[randint]
     
     def remove(self, s):
@@ -78,13 +75,13 @@ class GomokuEnv(gym.Env):
     '''
     GomokuEnv environment. Play against a fixed opponent.
     '''
-    metadata = {"render.modes": ["human", "ansi"]}
+    metadata = {"render_modes": ["human", "ansi"], "render.modes": ["human", "ansi"]}
     
-    def __init__(self, player_color, opponent, board_size):
+    def __init__(self, player_color, opponent='random', board_size=9):
         """
         Args:
             player_color: Stone color for the agent. Either 'black' or 'white'
-            opponent: Name of the opponent policy, e.g. random, beginner, medium, expert
+            opponent: Opponent policy (defaults to 'random', other options ignored)
             board_size: board_size of the board to use
         """
         self.board_size = board_size
@@ -98,7 +95,10 @@ class GomokuEnv(gym.Env):
         
         # Observation space on board
         shape = (self.board_size, self.board_size) # board_size * board_size
-        self.observation_space = spaces.Box(np.zeros(shape), np.ones(shape))
+        # Board values: 0=empty, 1=black, 2=white. Normalize to [0, 1] range
+        self.observation_space = spaces.Box(
+            low=0.0, high=1.0, shape=shape, dtype=np.float32
+        )
         
         # One action for each board position
         self.action_space = DiscreteWrapper(self.board_size**2)
@@ -115,12 +115,23 @@ class GomokuEnv(gym.Env):
     def _seed(self, seed=None):
         self.np_random, seed1 = seeding.np_random(seed)
         # Derive a random seed.
-        seed2 = seeding.hash_seed(seed1 + 1) % 2**32
+        # hash_seed was removed in newer Gym versions, use simple hash instead
+        seed2 = hash(seed1 + 1) % 2**32
         return [seed1, seed2]
+    
+    def reset(self, seed=None, options=None):
+        """Reset the environment and return initial observation and info."""
+        if seed is not None:
+            self._seed(seed)
+        obs = self._reset()
+        info = {}
+        return obs, info
     
     def _reset(self):
         self.state = GomokuState(Board(self.board_size), gomoku_util.BLACK) # Black Plays First
-        self._reset_opponent(self.state.board) # (re-initialize) the opponent,
+        # Only reset opponent if it hasn't been manually set (e.g., to a model)
+        if self.opponent_policy is None:
+            self._reset_opponent(self.state.board) # (re-initialize) the opponent,
         self.moves = []
         
         # Let the opponent play if it's not the agent's turn, there is no resign in Gomoku
@@ -142,12 +153,20 @@ class GomokuEnv(gym.Env):
         self.opponent_policy = None
         self.state = None
     
+    def render(self, mode="human"):
+        """Render the environment."""
+        return self._render(mode)
+    
     def _render(self, mode="human", close=False):
         if close:
             return
         outfile = StringIO() if mode == 'ansi' else sys.stdout
         outfile.write(repr(self.state) + '\n')
         return outfile
+    
+    def step(self, action):
+        """Run one timestep of the environment's dynamics."""
+        return self._step(action)
     
     def _step(self, action):
         '''
@@ -215,16 +234,8 @@ class GomokuEnv(gym.Env):
         return self.moves
     
     def _reset_opponent(self, board):
-        if self.opponent == 'random':
-            self.opponent_policy = make_random_policy(self.np_random)
-        elif self.opponent == 'beginner':
-            self.opponent_policy = make_beginner_policy(self.np_random)
-        elif self.opponent == 'medium':
-            self.opponent_policy = make_medium_policy(self.np_random)
-        elif self.opponent == 'expert':
-            self.opponent_policy = make_expert_policy(self.np_random)
-        else:
-            raise error.Error('Unrecognized opponent policy {}'.format(self.opponent))
+        # Use random opponent for simplicity
+        self.opponent_policy = make_random_policy(self.np_random)
 
 class Board(object):
     '''
@@ -234,9 +245,9 @@ class Board(object):
     def __init__(self, board_size):
         self.size = board_size
         self.board_state = [[gomoku_util.color_dict['empty']] * board_size for i in range(board_size)] # initialize board states to empty
-        self.move = 0                 # how many move has been made
-        self.last_coord = (-1,-1)     # last action coord
-        self.last_action = None       # last action made
+        self.move = 0
+        self.last_coord = (-1,-1)
+        self.last_action = None
     
     def coord_to_action(self, i, j):
         ''' convert coordinate i, j to action a in [0, board_size**2)
@@ -345,5 +356,7 @@ class Board(object):
         '''Return: np array
             np.array(board_size, board_size): state observation of the board
         '''
-        img = np.array(self.board_state) # shape [board_size, board_size]
+        img = np.array(self.board_state, dtype=np.float32) # shape [board_size, board_size]
+        # Normalize to [0, 1] range: 0->0.0, 1->0.5, 2->1.0
+        img = img / 2.0
         return img

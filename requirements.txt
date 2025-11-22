@@ -1,0 +1,10 @@
+# Core dependencies
+gym>=0.21.0
+numpy>=1.19.0
+
+# Deep learning framework
+torch>=1.9.0
+
+# Testing (optional)
+pytest>=6.0.0
+

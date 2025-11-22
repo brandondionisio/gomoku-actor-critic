@@ -1,4 +1,21 @@
-# Gym Gomoku Environment(Five-In-a-Row)
+# Actor-Critic Reinforcement Learning for Gomoku
+
+## About
+
+Our project....
+
+### Authors:
+Brandon Dionisio, Shepard Rodgers, Jordan Pauzie
+
+### Resources:
+
+
+
+
+
+
+<!-- Old README Below --!>
+<!-- # Gym Gomoku Environment(Five-In-a-Row)
 OpenAI Gym Env for game Gomoku(Five-In-a-Row, 五子棋, 五目並べ, omok, Gobang,...)
 The game is played on a typical 19x19 or 15x15 go board. Black plays first and players 
 alternate in placing a stone of their color on an empty intersection.
@@ -486,4 +503,4 @@ http://www.deepnlp.org/workspace/detail/ <br>
 [DeepNLP Review Ecommerce Brand List](http://www.deepnlp.org/review/ecommerce/pub) <br>
 [DeepNLP Review Car Brand List](http://www.deepnlp.org/review/car/pub) <br>
 [AI Agent Visualization Review Asynchronous Multi-Agent Simulation](http://www.deepnlp.org/blog/ai-agent-visualization-review-asynchronous-multi-agent-simulation) <br>
-[Dialogue Visualization Agent Multimodal Visualization Tools for AI Systems A Review](http://www.deepnlp.org/blog/dialogue-agent-multimodal-visualization-tools-for-ai-systems) <br>
+[Dialogue Visualization Agent Multimodal Visualization Tools for AI Systems A Review](http://www.deepnlp.org/blog/dialogue-agent-multimodal-visualization-tools-for-ai-systems) <br> -->
