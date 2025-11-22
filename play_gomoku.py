@@ -7,6 +7,9 @@ Play against the AI opponent by entering moves in format like "A1", "E5", etc.
 import gym
 import gym_gomoku
 import numpy as np
+import torch
+import os
+import sys
 
 # Workaround for NumPy 2.0 compatibility with Gym
 if not hasattr(np, 'bool8'):
@@ -56,9 +59,14 @@ def action_to_coord(action, board_size):
     number = row + 1
     return f"{letter}{number}"
 
-def play_interactive(board_size=9):
+def play_interactive(board_size=9, model_path=None, deterministic=True):
     """
     Play an interactive game of Gomoku.
+    
+    Args:
+        board_size: Size of the board (default: 9)
+        model_path: Path to trained model file. If None, plays against random opponent.
+        deterministic: If True, model always picks best move. If False, samples from distribution.
     """
     # Create environment
     if board_size in [9, 19]:
@@ -69,9 +77,50 @@ def play_interactive(board_size=9):
         from gym_gomoku.envs.gomoku import GomokuEnv
         env = GomokuEnv(player_color='black', opponent='random', board_size=board_size)
     
+    # Load model if provided
+    model = None
+    if model_path:
+        if not os.path.exists(model_path):
+            print(f"Error: Model file not found: {model_path}")
+            print("Playing against random opponent instead.")
+        else:
+            try:
+                from models import ActorCritic, load_model
+                from gym_gomoku.envs.util import make_model_policy
+                
+                print(f"Loading model from {model_path}...")
+                model = ActorCritic(
+                    board_size=board_size,
+                    action_size=board_size * board_size,
+                    channels=128,
+                    num_layers=4,
+                    hidden_size=256
+                )
+                model, metadata = load_model(model, model_path)
+                model.eval()
+                
+                device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                model = model.to(device)
+                
+                model_policy = make_model_policy(model, device=device, deterministic=deterministic)
+                env.opponent_policy = model_policy
+                
+                print("Model loaded successfully!")
+                if metadata:
+                    print(f"Model metadata: {metadata}")
+                print(f"Using device: {device}")
+            except Exception as e:
+                print(f"Error loading model: {e}")
+                print("Playing against random opponent instead.")
+                model = None
+    
+    opponent_type = "trained model" if model else "random opponent"
     print(f"\n{'='*60}")
     print(f"Welcome to Interactive Gomoku!")
     print(f"Board size: {board_size}x{board_size}")
+    print(f"Opponent: {opponent_type}")
+    if model:
+        print(f"Model mode: {'Deterministic (best move)' if deterministic else 'Stochastic (sampling)'}")
     print(f"You are playing as BLACK (X)")
     print(f"Enter moves in format: A1, E5, etc.")
     print(f"Type 'quit' to exit, 'reset' to start a new game")
@@ -136,19 +185,40 @@ def play_interactive(board_size=9):
     env.close()
 
 if __name__ == "__main__":
-    import sys
-    
     # Parse command line arguments
     board_size = 9
+    model_path = None
+    deterministic = True
     
     if len(sys.argv) > 1:
-        try:
-            board_size = int(sys.argv[1])
-            if board_size not in [9, 19]:
-                print("Warning: Board size should be 9 or 19. Using 9.")
-                board_size = 9
-        except ValueError:
-            print("Warning: Invalid board size. Using 9.")
+        # First argument: board size or model path
+        arg1 = sys.argv[1]
+        if arg1.endswith('.pt'):
+            # It's a model path
+            model_path = arg1
+        else:
+            # It's board size
+            try:
+                board_size = int(arg1)
+                if board_size not in [9, 19]:
+                    print("Warning: Board size should be 9 or 19. Using 9.")
+                    board_size = 9
+            except ValueError:
+                print("Warning: Invalid board size. Using 9.")
     
-    play_interactive(board_size)
+    if len(sys.argv) > 2:
+        # Second argument: board size (if first was model) or deterministic
+        arg2 = sys.argv[2]
+        if arg2.endswith('.pt'):
+            model_path = arg2
+        elif arg2.isdigit():
+            board_size = int(arg2)
+        else:
+            deterministic = arg2.lower() == 'true'
+    
+    if len(sys.argv) > 3:
+        # Third argument: deterministic
+        deterministic = sys.argv[3].lower() == 'true'
+    
+    play_interactive(board_size, model_path, deterministic)
 

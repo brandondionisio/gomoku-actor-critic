@@ -7,16 +7,13 @@ Supports two training modes:
 """
 
 import os
-import sys
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from collections import deque
 import gym
-import gym_gomoku
 
-from models import ActorCritic, get_action_mask_from_board, save_model, load_model
+from models import ActorCritic, get_action_mask_from_board, save_model
 from gym_gomoku.envs.gomoku import GomokuEnv
 from gym_gomoku.envs.util import make_model_policy
 

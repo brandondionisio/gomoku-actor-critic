@@ -180,7 +180,7 @@ class GomokuEnv(gym.Env):
         Raise:
             Illegal Move action, basically the position on board is not empty
         '''
-        assert self.state.color == self.player_color # it's the player's turn
+        assert self.state.color == self.player_color
         
         # If already terminal, then don't do anything
         if self.done:
@@ -200,24 +200,128 @@ class GomokuEnv(gym.Env):
             # After opponent play, we should be back to the original color
             assert self.state.color == self.player_color
         
-        # Reward: if nonterminal, there is no 5 in a row, then the reward is 0
+        # Reward shaping: Add intermediate rewards for good strategic moves
+        intermediate_reward = 0.0
+        
+        # Check if player's move was strategically good
+        player_action = action
+        player_board_state = prev_state.board.board_state
+        
+        # Reward for blocking opponent's 4-in-a-row (critical defensive move)
+        if self._check_opponent_four_in_row(player_board_state, player_action):
+            intermediate_reward += 0.3  # Strong reward for blocking 4-in-a-row
+        
+        # Reward for creating 3-in-a-row threat (good offensive move)
+        if self._check_player_three_in_row(self.state.board.board_state, player_action):
+            intermediate_reward += 0.1  # Moderate reward for creating threat
+        
+        # Reward: if nonterminal, return intermediate reward
         if not self.state.board.is_terminal():
             self.done = False
-            return self.state.board.encode(), 0., False, {'state': self.state}
+            return self.state.board.encode(), intermediate_reward, False, {'state': self.state}
         
-        # We're in a terminal state. Reward is 1 if won, -1 if lost
+        # We're in a terminal state. Reward is 1 if won, -1 if lost, plus intermediate rewards
         assert self.state.board.is_terminal(), 'The game is terminal'
         self.done = True
         
-        # Check Fianl wins
+        # Check Final wins
         exist, win_color = gomoku_util.check_five_in_row(self.state.board.board_state) # 'empty', 'black', 'white'
-        reward = 0.
+        final_reward = 0.
         if win_color == "empty": # draw
-            reward = 0.
+            final_reward = 0.
         else:
             player_wins = (self.player_color == win_color) # check if player_color is the win_color
-            reward = 1. if player_wins else -1.
-        return self.state.board.encode(), reward, True, {'state': self.state}
+            final_reward = 1. if player_wins else -1.
+        
+        # Add intermediate reward to final reward
+        total_reward = final_reward + intermediate_reward
+        return self.state.board.encode(), total_reward, True, {'state': self.state}
+    
+    def _check_opponent_four_in_row(self, board_state_before_move, action):
+        """
+        Check if the given action blocks an opponent's 4-in-a-row threat.
+        
+        Args:
+            board_state_before_move: Board state before the player's move (2D list)
+            action: Action that was just played
+        
+        Returns:
+            True if action blocks opponent's 4-in-a-row, False otherwise
+        """
+        opponent_color = gomoku_util.other_color(self.player_color)
+        opponent_color_val = gomoku_util.color_dict[opponent_color]
+        
+        # Patterns for 4-in-a-row that need blocking:
+        # [0, X, X, X, X] or [X, X, X, X, 0] where X is opponent's color
+        pattern_four_a = [0] + [opponent_color_val] * 4  # [0, X, X, X, X]
+        pattern_four_b = [opponent_color_val] * 4 + [0]  # [X, X, X, X, 0]
+        
+        # Get coordinate of the action
+        board = Board(self.board_size)
+        board.copy(board_state_before_move)
+        coord = board.action_to_coord(action)
+        
+        # Check all lines containing this coordinate
+        for line in gomoku_util.iterator(board_state_before_move):
+            if coord in line:
+                line_values = gomoku_util.value(board_state_before_move, line)
+                # Check if this line has a 4-in-a-row pattern with empty at our action position
+                if gomoku_util.is_sublist(line_values, pattern_four_a):
+                    # Find where the pattern starts
+                    pattern_start = gomoku_util.index(line_values, pattern_four_a)
+                    if pattern_start >= 0:
+                        # Check if our action is at the empty position (index 0 in pattern)
+                        if pattern_start < len(line) and line[pattern_start] == coord:
+                            return True
+                if gomoku_util.is_sublist(line_values, pattern_four_b):
+                    # Find where the pattern starts
+                    pattern_start = gomoku_util.index(line_values, pattern_four_b)
+                    if pattern_start >= 0:
+                        # Check if our action is at the empty position (index 4 in pattern)
+                        if pattern_start + 4 < len(line) and line[pattern_start + 4] == coord:
+                            return True
+        return False
+    
+    def _check_player_three_in_row(self, board_state_after_move, action):
+        """
+        Check if the given action creates a 3-in-a-row for the player that is open on both sides.
+        Only rewards threats that are open on both sides (stronger threat).
+        
+        Args:
+            board_state_after_move: Board state after the player's move (2D list)
+            action: Action that was just played
+        
+        Returns:
+            True if action creates player's 3-in-a-row open on both sides, False otherwise
+        """
+        player_color_val = gomoku_util.color_dict[self.player_color]
+        
+        # Pattern for 3-in-a-row open on both sides: [0, X, X, X, 0]
+        # This is a stronger threat as it can become 4-in-a-row in two ways
+        pattern_three_open_both = [0] + [player_color_val] * 3 + [0]  # [0, X, X, X, 0]
+        
+        board = Board(self.board_size)
+        board.copy(board_state_after_move)
+        coord = board.action_to_coord(action)
+        
+        # Check all lines containing this coordinate
+        for line in gomoku_util.iterator(board_state_after_move):
+            if coord not in line:
+                continue
+                
+            line_values = gomoku_util.value(board_state_after_move, line)
+            
+            # Only check for pattern open on both sides
+            if gomoku_util.is_sublist(line_values, pattern_three_open_both):
+                pattern_start = gomoku_util.index(line_values, pattern_three_open_both)
+                if pattern_start >= 0:
+                    # Check if our coord is in the pattern range
+                    pattern_end = pattern_start + len(pattern_three_open_both)
+                    if pattern_end <= len(line):
+                        pattern_coords = line[pattern_start:pattern_end]
+                        if coord in pattern_coords:
+                            return True
+        return False
     
     def _exec_opponent_play(self, curr_state, prev_state, prev_action):
         '''There is no resign in gomoku'''
