@@ -1,6 +1,6 @@
 {
   "board_size": 9,
-  "episode": 30000,
-  "win_rate": 0.4963666666666667,
+  "episode": 3000,
+  "win_rate": 0.536,
   "training_mode": "self-play"
 }
