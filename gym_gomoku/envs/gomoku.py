@@ -170,9 +170,20 @@ class GomokuEnv(gym.Env):
         return self._step(action)
     
     def _step(self, action):
+        '''
+        Args: 
+            action: int
+        Return: 
+            observation: board encoding, 
+            reward: reward of the game, 
+            done: boolean, 
+            info: state dict
+        Raise:
+            Illegal Move action, basically the position on board is not empty
+        '''
         assert self.state.color == self.player_color
 
-        # ---------- ILLEGAL MOVE ----------
+        # Check for illegal move
         if action not in self.action_space:
             self.done = True
             return self.state.board.encode(use_onehot=True), -1.0, True, {
@@ -180,17 +191,17 @@ class GomokuEnv(gym.Env):
                 'illegal_move': True
             }
 
-        # ---------- TERMINAL CHECK ----------
+        # If already terminal, then don't do anything
         if self.done:
             return self.state.board.encode(use_onehot=True), 0.0, True, {'state': self.state}
 
-        # ---------- PLAYER MOVE ----------
+        # Player play
         prev_state = self.state
         self.state = self.state.act(action)
         self.moves.append(self.state.board.last_coord)
         self.action_space.remove(action)
 
-        # ---------- OPPONENT MOVE ----------
+        # Opponent play
         if not self.state.board.is_terminal():
             self.state, opponent_action = self._exec_opponent_play(
                 self.state, prev_state, action
@@ -199,7 +210,7 @@ class GomokuEnv(gym.Env):
             self.action_space.remove(opponent_action)
             assert self.state.color == self.player_color
 
-        # ---------- REWARD SHAPING ----------
+        # Reward shaping
         intermediate_reward = 0.0
 
         board_before = prev_state.board.board_state
@@ -218,11 +229,15 @@ class GomokuEnv(gym.Env):
         def in_bounds(x, y):
             return 0 <= x < len(board_after) and 0 <= y < len(board_after[0])
 
-        # ✅ BLOCK OPPONENT OPEN FOUR
+        # Block opponent open four (increased reward)
         if self._check_opponent_four_in_row(board_before, action):
-            intermediate_reward += 0.15
+            intermediate_reward += 0.20  # Increased from 0.15
 
-        # ✅ CREATE OPEN FOUR
+        # Block opponent open three (new reward)
+        if self._check_opponent_three_in_row(board_before, action):
+            intermediate_reward += 0.08
+
+        # Create open four
         for dr, dc in DIRECTIONS:
             count = 1
 
@@ -239,9 +254,11 @@ class GomokuEnv(gym.Env):
             open_2 = in_bounds(r-i*dr, c-i*dc) and board_after[r-i*dr][c-i*dc] == 0
 
             if count == 4 and open_1 and open_2:
-                intermediate_reward += 0.25
+                intermediate_reward += 0.30
+            elif count == 4 and (open_1 or open_2):
+                intermediate_reward += 0.15
 
-        # ✅ CREATE OPEN THREE
+        # Create open three
         for dr, dc in DIRECTIONS:
             count = 1
 
@@ -258,17 +275,23 @@ class GomokuEnv(gym.Env):
             open_2 = in_bounds(r-i*dr, c-i*dc) and board_after[r-i*dr][c-i*dc] == 0
 
             if count == 3 and open_1 and open_2:
-                intermediate_reward += 0.05
+                intermediate_reward += 0.08
 
-        # ✅ STEP PENALTY
-        intermediate_reward -= 0.001
+        # Center control
+        center_r, center_c = len(board_after) // 2, len(board_after[0]) // 2
+        distance_from_center = abs(r - center_r) + abs(c - center_c)
+        if distance_from_center <= 2:
+            intermediate_reward += 0.02
 
-        # ---------- NON-TERMINAL ----------
+        # Step penalty
+        intermediate_reward -= 0.0005
+
+        # Non-terminal
         if not self.state.board.is_terminal():
             self.done = False
             return self.state.board.encode(use_onehot=True), intermediate_reward, False, {'state': self.state}
 
-        # ---------- TERMINAL ----------
+        # Terminal
         self.done = True
         exist, win_color = gomoku_util.check_five_in_row(
             self.state.board.board_state
@@ -325,6 +348,47 @@ class GomokuEnv(gym.Env):
                     if pattern_start >= 0:
                         # Check if our action is at the empty position (index 4 in pattern)
                         if pattern_start + 4 < len(line) and line[pattern_start + 4] == coord:
+                            return True
+        return False
+    
+    def _check_opponent_three_in_row(self, board_state_before_move, action):
+        """
+        Check if the given action blocks an opponent's 3-in-a-row threat (open on both sides).
+        
+        Args:
+            board_state_before_move: Board state before the player's move (2D list)
+            action: Action that was just played
+        
+        Returns:
+            True if action blocks opponent's 3-in-a-row open on both sides, False otherwise
+        """
+        opponent_color = gomoku_util.other_color(self.player_color)
+        opponent_color_val = gomoku_util.color_dict[opponent_color]
+        
+        # Pattern for 3-in-a-row open on both sides: [0, X, X, X, 0] where X is opponent's color
+        pattern_three_open_both = [0] + [opponent_color_val] * 3 + [0]  # [0, X, X, X, 0]
+        
+        # Get coordinate of the action
+        board = Board(self.board_size)
+        board.copy(board_state_before_move)
+        coord = board.action_to_coord(action)
+        
+        # Check all lines containing this coordinate
+        for line in gomoku_util.iterator(board_state_before_move):
+            if coord not in line:
+                continue
+                
+            line_values = gomoku_util.value(board_state_before_move, line)
+            
+            # Check if this line has a 3-in-a-row pattern open on both sides
+            if gomoku_util.is_sublist(line_values, pattern_three_open_both):
+                pattern_start = gomoku_util.index(line_values, pattern_three_open_both)
+                if pattern_start >= 0:
+                    # Check if our action is at one of the empty positions
+                    pattern_end = pattern_start + len(pattern_three_open_both)
+                    if pattern_end <= len(line):
+                        pattern_coords = line[pattern_start:pattern_end]
+                        if coord in pattern_coords:
                             return True
         return False
     

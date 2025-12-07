@@ -94,7 +94,9 @@ def play_interactive(board_size=9, model_path=None, deterministic=True):
                     action_size=board_size * board_size,
                     channels=128,
                     num_layers=4,
-                    hidden_size=256
+                    hidden_size=256,
+                    input_channels=3,  # One-hot encoding: 3 channels (empty, black, white)
+                    extra_feature_size=4  # Pattern features: 4 features
                 )
                 model, metadata = load_model(model, model_path)
                 model.eval()

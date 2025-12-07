@@ -31,11 +31,11 @@ class PPOTrainer:
     def __init__(
         self,
         model,
-        lr=1e-4,  # Reduced from 3e-4 for stability
-        gamma=0.99,
+        lr=1.5e-4,  # Increased from 1e-4 for faster learning
+        gamma=0.95,  # Reduced from 0.99 for faster reward signal
         eps_clip=0.2,
         value_coef=1.0,  # Increased from 0.5 to stabilize value function
-        entropy_coef=0.01,  # Increased from 0.001 for better exploration
+        entropy_coef=0.015,  # Increased from 0.01 for more exploration
         max_grad_norm=0.5,
         device='cpu'
     ):
@@ -61,7 +61,7 @@ class PPOTrainer:
         # Optimizer
         self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
         
-        # Training statistics (using deque for O(1) operations)
+        # Training statistics
         self.stats = {
             'episodes': 0,
             'wins': 0,
@@ -143,7 +143,6 @@ class PPOTrainer:
         
         self.stats['episode_lengths'].append(episode_length)
         self.stats['recent_rewards'].append(episode_reward)
-        # deque automatically maintains maxlen, no need to pop manually
         
         if rewards and rewards[-1] > 0:
             self.stats['wins'] += 1
@@ -325,9 +324,14 @@ def train_against_random(
             win_rate = trainer.stats['wins'] / max(trainer.stats['episodes'], 1)
             avg_reward = trainer.stats['total_reward'] / max(trainer.stats['episodes'], 1)
             
-            # Calculate rolling averages (last 100 episodes)
+            # Calculate rolling averages (last 20 episodes for responsiveness, or all if < 20)
             recent_rewards = list(trainer.stats['recent_rewards'])  # Convert deque to list for numpy
             recent_lengths = list(trainer.stats['episode_lengths'])  # Convert deque to list for numpy
+            # Use last 20 episodes for rolling average to show recent trend
+            window_size = 20
+            if len(recent_rewards) > window_size:
+                recent_rewards = recent_rewards[-window_size:]
+                recent_lengths = recent_lengths[-window_size:]
             rolling_avg_reward = np.mean(recent_rewards) if recent_rewards else 0.0
             rolling_avg_length = np.mean(recent_lengths) if recent_lengths else 0.0
             
@@ -425,9 +429,14 @@ def train_self_play(
             win_rate = trainer.stats['wins'] / max(trainer.stats['episodes'], 1)
             avg_reward = trainer.stats['total_reward'] / max(trainer.stats['episodes'], 1)
             
-            # Calculate rolling averages (last 100 episodes)
+            # Calculate rolling averages (last 20 episodes for responsiveness, or all if < 20)
             recent_rewards = list(trainer.stats['recent_rewards'])  # Convert deque to list for numpy
             recent_lengths = list(trainer.stats['episode_lengths'])  # Convert deque to list for numpy
+            # Use last 20 episodes for rolling average to show recent trend
+            window_size = 20
+            if len(recent_rewards) > window_size:
+                recent_rewards = recent_rewards[-window_size:]
+                recent_lengths = recent_lengths[-window_size:]
             rolling_avg_reward = np.mean(recent_rewards) if recent_rewards else 0.0
             rolling_avg_length = np.mean(recent_lengths) if recent_lengths else 0.0
             

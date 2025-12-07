@@ -172,7 +172,7 @@ class GomokuUtil(object):
                 break
         return idx
     
-    # === NEW: One-hot board encoding (3 channels: empty, black, white) ===
+    # One-hot board encoding (3 channels: empty, black, white)
     def encode_board_onehot(self, board_state):
         size = len(board_state)
         onehot = np.zeros((3, size, size), dtype=np.float32)
@@ -182,7 +182,7 @@ class GomokuUtil(object):
                 onehot[cell, i, j] = 1.0
         return onehot
 
-    # === NEW: Count useful patterns as extra features ===
+    # Count useful patterns as extra features
     def extract_pattern_features(self, board_state, player_color):
         """
         Create hand-crafted features:
@@ -210,7 +210,7 @@ class GomokuUtil(object):
 
         return np.array(f, dtype=np.float32)
 
-    # === NEW: Combine everything into one feature vector ===
+    # Combine everything into one feature vector
     def build_feature_vector(self, board_state, player_color):
         """
         Combine:
