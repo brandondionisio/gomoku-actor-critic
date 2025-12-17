@@ -4,7 +4,7 @@
 '''
 
 import numpy as np
-import gym
+import gymnasium as gym
 from gym import spaces
 from gym import error
 from gym.utils import seeding
@@ -171,6 +171,57 @@ class GomokuUtil(object):
                 idx = i
                 break
         return idx
+    
+    # One-hot board encoding (3 channels: empty, black, white)
+    def encode_board_onehot(self, board_state):
+        size = len(board_state)
+        onehot = np.zeros((3, size, size), dtype=np.float32)
+        for i in range(size):
+            for j in range(size):
+                cell = board_state[i][j]    # 0 empty, 1 black, 2 white
+                onehot[cell, i, j] = 1.0
+        return onehot
+
+    # Count useful patterns as extra features
+    def extract_pattern_features(self, board_state, player_color):
+        """
+        Create hand-crafted features:
+        - open three for player
+        - open four for player
+        - same but for opponent
+        """
+
+        opp = self.other_color(player_color)
+
+        player_val = self.color_dict[player_color]
+        opp_val    = self.color_dict[opp]
+
+        # patterns
+        open_three        = [0, player_val, player_val, player_val, 0]
+        open_four         = [player_val]*4
+        opp_open_three    = [0, opp_val, opp_val, opp_val, 0]
+        opp_open_four     = [opp_val]*4
+
+        f = []
+        f.append(int(self.check_pattern(board_state, open_three)[0]))
+        f.append(int(self.check_pattern(board_state, open_four)[0]))
+        f.append(int(self.check_pattern(board_state, opp_open_three)[0]))
+        f.append(int(self.check_pattern(board_state, opp_open_four)[0]))
+
+        return np.array(f, dtype=np.float32)
+
+    # Combine everything into one feature vector
+    def build_feature_vector(self, board_state, player_color):
+        """
+        Combine:
+        - One-hot encoded board  → (3 × size × size)
+        - Extra ANN features     → 4 binary features
+        """
+        onehot = self.encode_board_onehot(board_state)
+        extra  = self.extract_pattern_features(board_state, player_color)
+
+        onehot_flat = onehot.reshape(-1)
+        return np.concatenate([onehot_flat, extra])
 
 gomoku_util = GomokuUtil()
 
@@ -216,16 +267,25 @@ def make_model_policy(model, device='cpu', deterministic=False):
         board = curr_state.board
         board_size = board.size
         
-        # Encode board to numpy array (normalized to [0, 1])
-        obs = board.encode()  # Shape: (board_size, board_size)
+        # Encode board to one-hot numpy array
+        obs = board.encode(use_onehot=True)  # Shape: (3, board_size, board_size)
         
         # Convert to tensor and add batch dimension
-        obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(device)  # Shape: (1, board_size, board_size)
+        obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(device)  # Shape: (1, 3, board_size, board_size)
         
-        # Get action mask (valid moves)
-        action_mask = get_action_mask_from_board(obs, board_size)
+        # Get action mask (valid moves) - use raw board_state for mask
+        from models.model_utils import get_action_mask_from_board
+        board_state_2d = np.array(board.board_state, dtype=np.float32)
+        action_mask = get_action_mask_from_board(board_state_2d, board_size)
         action_mask = action_mask.reshape(1, -1)  # Shape: (1, action_size)
         action_mask_tensor = torch.BoolTensor(action_mask).to(device)
+        
+        # Extract pattern features for extra_features
+        from gym_gomoku.envs.util import gomoku_util
+        # Determine player color from state
+        player_color = curr_state.color
+        pattern_features = gomoku_util.extract_pattern_features(board.board_state, player_color)
+        pattern_features_tensor = torch.FloatTensor(pattern_features).unsqueeze(0).to(device)  # Shape: (1, 4)
         
         # Get action from model
         model.eval()  # Ensure model is in eval mode
@@ -235,21 +295,24 @@ def make_model_policy(model, device='cpu', deterministic=False):
                 action, _, _ = model.get_action(
                     obs_tensor, 
                     action_mask=action_mask_tensor, 
-                    deterministic=deterministic
+                    deterministic=deterministic,
+                    extra_features=pattern_features_tensor
                 )
             elif hasattr(model, 'actor'):
                 # ActorCritic model (alternative access)
                 action, _ = model.actor.get_action(
                     obs_tensor,
                     action_mask=action_mask_tensor,
-                    deterministic=deterministic
+                    deterministic=deterministic,
+                    extra_features=pattern_features_tensor
                 )
             else:
                 # Just ActorNetwork
                 action, _ = model.get_action(
                     obs_tensor,
                     action_mask=action_mask_tensor,
-                    deterministic=deterministic
+                    deterministic=deterministic,
+                    extra_features=pattern_features_tensor
                 )
         
         # Convert tensor to Python int

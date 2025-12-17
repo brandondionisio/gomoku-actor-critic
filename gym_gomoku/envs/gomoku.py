@@ -1,5 +1,5 @@
 import numpy as np
-import gym
+import gymnasium as gym
 from gym import spaces
 from gym import error
 from gym.utils import seeding
@@ -94,8 +94,9 @@ class GomokuEnv(gym.Env):
         self.opponent = opponent
         
         # Observation space on board
-        shape = (self.board_size, self.board_size) # board_size * board_size
-        # Board values: 0=empty, 1=black, 2=white. Normalize to [0, 1] range
+        # Using one-hot encoding: (3, board_size, board_size)
+        # Channels: [empty, black, white] - each channel is binary (0 or 1)
+        shape = (3, self.board_size, self.board_size)
         self.observation_space = spaces.Box(
             low=0.0, high=1.0, shape=shape, dtype=np.float32
         )
@@ -147,7 +148,7 @@ class GomokuEnv(gym.Env):
         self.action_space = DiscreteWrapper(self.board_size**2)
         
         self.done = self.state.board.is_terminal()
-        return self.state.board.encode()
+        return self.state.board.encode(use_onehot=True)
     
     def _close(self):
         self.opponent_policy = None
@@ -181,61 +182,129 @@ class GomokuEnv(gym.Env):
             Illegal Move action, basically the position on board is not empty
         '''
         assert self.state.color == self.player_color
-        
+
+        # Check for illegal move
+        if action not in self.action_space:
+            self.done = True
+            return self.state.board.encode(use_onehot=True), -1.0, True, {
+                'state': self.state,
+                'illegal_move': True
+            }
+
         # If already terminal, then don't do anything
         if self.done:
-            return self.state.board.encode(), 0., True, {'state': self.state}
-        
+            return self.state.board.encode(use_onehot=True), 0.0, True, {'state': self.state}
+
         # Player play
         prev_state = self.state
         self.state = self.state.act(action)
         self.moves.append(self.state.board.last_coord)
-        self.action_space.remove(action) # remove current action from action_space
-        
+        self.action_space.remove(action)
+
         # Opponent play
         if not self.state.board.is_terminal():
-            self.state, opponent_action = self._exec_opponent_play(self.state, prev_state, action)
+            self.state, opponent_action = self._exec_opponent_play(
+                self.state, prev_state, action
+            )
             self.moves.append(self.state.board.last_coord)
-            self.action_space.remove(opponent_action)   # remove opponent action from action_space
-            # After opponent play, we should be back to the original color
+            self.action_space.remove(opponent_action)
             assert self.state.color == self.player_color
-        
-        # Reward shaping: Add intermediate rewards for good strategic moves
+
+        # Reward shaping
         intermediate_reward = 0.0
-        
-        # Check if player's move was strategically good
-        player_action = action
-        player_board_state = prev_state.board.board_state
-        
-        # Reward for blocking opponent's 4-in-a-row (critical defensive move)
-        if self._check_opponent_four_in_row(player_board_state, player_action):
-            intermediate_reward += 0.3  # Strong reward for blocking 4-in-a-row
-        
-        # Reward for creating 3-in-a-row threat (good offensive move)
-        if self._check_player_three_in_row(self.state.board.board_state, player_action):
-            intermediate_reward += 0.1  # Moderate reward for creating threat
-        
-        # Reward: if nonterminal, return intermediate reward
+
+        board_before = prev_state.board.board_state
+        board_after  = self.state.board.board_state
+        player_color = gomoku_util.color_dict[self.player_color]
+
+        # Convert flat action → (r,c)
+        if isinstance(action, tuple):
+            r, c = action
+        else:
+            n = len(board_after)
+            r, c = divmod(action, n)
+
+        DIRECTIONS = [(0,1), (1,0), (1,1), (1,-1)]
+
+        def in_bounds(x, y):
+            return 0 <= x < len(board_after) and 0 <= y < len(board_after[0])
+
+        # Block opponent open four (increased reward)
+        if self._check_opponent_four_in_row(board_before, action):
+            intermediate_reward += 0.20  # Increased from 0.15
+
+        # Block opponent open three (new reward)
+        if self._check_opponent_three_in_row(board_before, action):
+            intermediate_reward += 0.08
+
+        # Create open four
+        for dr, dc in DIRECTIONS:
+            count = 1
+
+            i = 1
+            while in_bounds(r+i*dr, c+i*dc) and board_after[r+i*dr][c+i*dc] == player_color:
+                count += 1
+                i += 1
+            open_1 = in_bounds(r+i*dr, c+i*dc) and board_after[r+i*dr][c+i*dc] == 0
+
+            i = 1
+            while in_bounds(r-i*dr, c-i*dc) and board_after[r-i*dr][c-i*dc] == player_color:
+                count += 1
+                i += 1
+            open_2 = in_bounds(r-i*dr, c-i*dc) and board_after[r-i*dr][c-i*dc] == 0
+
+            if count == 4 and open_1 and open_2:
+                intermediate_reward += 0.30
+            elif count == 4 and (open_1 or open_2):
+                intermediate_reward += 0.15
+
+        # Create open three
+        for dr, dc in DIRECTIONS:
+            count = 1
+
+            i = 1
+            while in_bounds(r+i*dr, c+i*dc) and board_after[r+i*dr][c+i*dc] == player_color:
+                count += 1
+                i += 1
+            open_1 = in_bounds(r+i*dr, c+i*dc) and board_after[r+i*dr][c+i*dc] == 0
+
+            i = 1
+            while in_bounds(r-i*dr, c-i*dc) and board_after[r-i*dr][c-i*dc] == player_color:
+                count += 1
+                i += 1
+            open_2 = in_bounds(r-i*dr, c-i*dc) and board_after[r-i*dr][c-i*dc] == 0
+
+            if count == 3 and open_1 and open_2:
+                intermediate_reward += 0.08
+
+        # Center control
+        center_r, center_c = len(board_after) // 2, len(board_after[0]) // 2
+        distance_from_center = abs(r - center_r) + abs(c - center_c)
+        if distance_from_center <= 2:
+            intermediate_reward += 0.02
+
+        # Step penalty
+        intermediate_reward -= 0.0005
+
+        # Non-terminal
         if not self.state.board.is_terminal():
             self.done = False
-            return self.state.board.encode(), intermediate_reward, False, {'state': self.state}
-        
-        # We're in a terminal state. Reward is 1 if won, -1 if lost, plus intermediate rewards
-        assert self.state.board.is_terminal(), 'The game is terminal'
+            return self.state.board.encode(use_onehot=True), intermediate_reward, False, {'state': self.state}
+
+        # Terminal
         self.done = True
-        
-        # Check Final wins
-        exist, win_color = gomoku_util.check_five_in_row(self.state.board.board_state) # 'empty', 'black', 'white'
-        final_reward = 0.
-        if win_color == "empty": # draw
-            final_reward = 0.
+        exist, win_color = gomoku_util.check_five_in_row(
+            self.state.board.board_state
+        )
+
+        if win_color == "empty":
+            final_reward = 0.0
         else:
-            player_wins = (self.player_color == win_color) # check if player_color is the win_color
-            final_reward = 1. if player_wins else -1.
-        
-        # Add intermediate reward to final reward
+            final_reward = 1.0 if self.player_color == win_color else -1.0
+
         total_reward = final_reward + intermediate_reward
-        return self.state.board.encode(), total_reward, True, {'state': self.state}
+        
+        return self.state.board.encode(use_onehot=True), total_reward, True, {'state': self.state}
     
     def _check_opponent_four_in_row(self, board_state_before_move, action):
         """
@@ -279,6 +348,47 @@ class GomokuEnv(gym.Env):
                     if pattern_start >= 0:
                         # Check if our action is at the empty position (index 4 in pattern)
                         if pattern_start + 4 < len(line) and line[pattern_start + 4] == coord:
+                            return True
+        return False
+    
+    def _check_opponent_three_in_row(self, board_state_before_move, action):
+        """
+        Check if the given action blocks an opponent's 3-in-a-row threat (open on both sides).
+        
+        Args:
+            board_state_before_move: Board state before the player's move (2D list)
+            action: Action that was just played
+        
+        Returns:
+            True if action blocks opponent's 3-in-a-row open on both sides, False otherwise
+        """
+        opponent_color = gomoku_util.other_color(self.player_color)
+        opponent_color_val = gomoku_util.color_dict[opponent_color]
+        
+        # Pattern for 3-in-a-row open on both sides: [0, X, X, X, 0] where X is opponent's color
+        pattern_three_open_both = [0] + [opponent_color_val] * 3 + [0]  # [0, X, X, X, 0]
+        
+        # Get coordinate of the action
+        board = Board(self.board_size)
+        board.copy(board_state_before_move)
+        coord = board.action_to_coord(action)
+        
+        # Check all lines containing this coordinate
+        for line in gomoku_util.iterator(board_state_before_move):
+            if coord not in line:
+                continue
+                
+            line_values = gomoku_util.value(board_state_before_move, line)
+            
+            # Check if this line has a 3-in-a-row pattern open on both sides
+            if gomoku_util.is_sublist(line_values, pattern_three_open_both):
+                pattern_start = gomoku_util.index(line_values, pattern_three_open_both)
+                if pattern_start >= 0:
+                    # Check if our action is at one of the empty positions
+                    pattern_end = pattern_start + len(pattern_three_open_both)
+                    if pattern_end <= len(line):
+                        pattern_coords = line[pattern_start:pattern_end]
+                        if coord in pattern_coords:
                             return True
         return False
     
@@ -456,11 +566,18 @@ class Board(object):
         out += (label_boundry + label_letters)
         return out
     
-    def encode(self):
+    def encode(self, use_onehot=True):
         '''Return: np array
-            np.array(board_size, board_size): state observation of the board
+            If use_onehot=True: np.array(3, board_size, board_size) - one-hot encoded board
+            If use_onehot=False: np.array(board_size, board_size) - normalized single channel (legacy)
         '''
-        img = np.array(self.board_state, dtype=np.float32) # shape [board_size, board_size]
-        # Normalize to [0, 1] range: 0->0.0, 1->0.5, 2->1.0
-        img = img / 2.0
-        return img
+        if use_onehot:
+            # Return one-hot encoded board: (3, board_size, board_size)
+            # Channels: [empty, black, white]
+            return gomoku_util.encode_board_onehot(self.board_state)
+        else:
+            # Legacy encoding: normalized single channel
+            img = np.array(self.board_state, dtype=np.float32) # shape [board_size, board_size]
+            # Normalize to [0, 1] range: 0->0.0, 1->0.5, 2->1.0
+            img = img / 2.0
+            return img

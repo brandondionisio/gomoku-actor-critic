@@ -31,7 +31,9 @@ def get_action_mask_from_board(board_state, board_size):
     Create an action mask from a board state.
     
     Args:
-        board_state: 2D numpy array representing the board (0=empty, 1=black, 2=white)
+        board_state: Can be:
+            - 2D numpy array (board_size, board_size) with values 0=empty, 1=black, 2=white
+            - 3D numpy array (3, board_size, board_size) one-hot encoded [empty, black, white]
         board_size: Size of the board
     
     Returns:
@@ -41,8 +43,17 @@ def get_action_mask_from_board(board_state, board_size):
     action_size = board_size * board_size
     mask = np.zeros(action_size, dtype=bool)
     
-    flat_board = board_state.flatten()
-    empty_positions = np.where(flat_board == 0)[0]
+    # Handle one-hot encoded input (3, board_size, board_size)
+    if board_state.ndim == 3 and board_state.shape[0] == 3:
+        # Extract empty channel (channel 0) and flatten
+        empty_channel = board_state[0]  # Shape: (board_size, board_size)
+        flat_board = empty_channel.flatten()
+        empty_positions = np.where(flat_board == 1.0)[0]  # 1.0 means empty in one-hot
+    else:
+        # Handle 2D input (legacy format)
+        flat_board = board_state.flatten()
+        empty_positions = np.where(flat_board == 0)[0]
+    
     mask[empty_positions] = True
     
     return mask
